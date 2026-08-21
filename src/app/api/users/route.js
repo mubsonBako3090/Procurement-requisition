@@ -3,8 +3,8 @@ import { cookies } from "next/headers";
 import { verifyToken } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import User from "@/models/User";
-import { editUserSchema } from "@/lib/validators/user";
-import { editUser } from "@/services/userService";
+import { inviteUserSchema } from "@/lib/validators/user";
+import { inviteUser } from "@/services/userService";
 import { ROLES } from "@/constants/roles";
 
 function getAuth() {
@@ -18,39 +18,46 @@ function requireAdmin(auth) {
   return null;
 }
 
-export async function GET(request, { params }) {
+export async function GET(request) {
   const auth = getAuth();
   const denied = requireAdmin(auth);
   if (denied) return denied;
 
   await connectDB();
-  const user = await User.findById(params.id).select("-passwordHash -passwordResetToken").lean();
-  if (!user) return NextResponse.json({ message: "User not found." }, { status: 404 });
 
-  return NextResponse.json({ user });
+  const { searchParams } = new URL(request.url);
+  const status = searchParams.get("status");
+
+  const query = {};
+  if (status) query.accountStatus = status;
+
+  const users = await User.find(query).select("-passwordHash -passwordResetToken").sort({ createdAt: -1 }).lean();
+
+  return NextResponse.json({ users });
 }
 
-// PATCH handles both profile edits and status changes (deactivate/reactivate)
-// via the same accountStatus field in editUserSchema.
-export async function PATCH(request, { params }) {
+export async function POST(request) {
   const auth = getAuth();
   const denied = requireAdmin(auth);
   if (denied) return denied;
 
   try {
     const body = await request.json();
-    const { error, value } = editUserSchema.validate(body);
+    const { error, value } = inviteUserSchema.validate(body);
     if (error) {
       return NextResponse.json({ message: error.details[0].message }, { status: 400 });
     }
 
     await connectDB();
 
-    const user = await editUser({ adminId: auth.sub, userId: params.id, payload: value });
+    const user = await inviteUser({ adminId: auth.sub, payload: value });
 
-    return NextResponse.json({ user });
+    return NextResponse.json(
+      { message: "User invited. They'll receive an email to set their password.", user },
+      { status: 201 }
+    );
   } catch (err) {
     console.error(err);
-    return NextResponse.json({ message: err.message || "Update failed." }, { status: 500 });
+    return NextResponse.json({ message: err.message || "Invite failed." }, { status: 500 });
   }
-}
+      }
